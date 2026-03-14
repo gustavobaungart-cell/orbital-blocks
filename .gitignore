@@ -1,0 +1,15 @@
+firebase-config.js
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+node_modules/
+__pycache__/
+*.pyc

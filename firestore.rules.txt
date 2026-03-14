@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /scores/{docId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['nick','mode','score','createdAt'])
+                    && request.resource.data.nick is string
+                    && request.resource.data.nick.size() >= 1
+                    && request.resource.data.nick.size() <= 18
+                    && request.resource.data.mode in ['classic','time','survival']
+                    && request.resource.data.score is int
+                    && request.resource.data.score >= 0
+                    && request.resource.data.score <= 1000000;
+      allow update, delete: if false;
+    }
+  }
+}

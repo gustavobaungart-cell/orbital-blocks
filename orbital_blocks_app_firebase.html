@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Orbital Blocks</title>
+  <style>
+    :root{--bg:#070b1a;--card:#121a34;--ink:#ecf1ff;--muted:#9fb0e0;--line:#2c3b77;--pri:#59d1ff;--ok:#42d392;--bad:#ff6b6b}
+    *{box-sizing:border-box;font-family:Inter,system-ui,Arial}
+    body{margin:0;background:radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%);color:var(--ink);min-height:100vh;overscroll-behavior:none}
+    body.game-active{overflow:hidden;touch-action:none}
+    .top{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #223163;background:#0c1430;position:sticky;top:0;z-index:3}
+    .coin{color:#ffe28a;font-weight:700}
+    .container{max-width:1100px;margin:0 auto;padding:14px}
+    .card{background:rgba(18,26,52,.93);border:1px solid var(--line);border-radius:14px;padding:14px}
+    .grid{display:grid;gap:10px}
+    .menu{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+    .btn{border:0;border-radius:12px;padding:12px 14px;background:#2a3d78;color:#eef4ff;font-weight:700;cursor:pointer}
+    .btn.primary{background:linear-gradient(90deg,#59d1ff,#7ea1ff);color:#08112b}
+    .btn.good{background:#1f7b58}
+    .btn.warn{background:#6a4b1f}
+    .btn.danger{background:#6e2531}
+    .sub{color:var(--muted);font-size:.9rem}
+    .hidden{display:none !important}
+    .modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;z-index:9}
+    .panel{width:min(460px,94vw);background:#121a34;border:1px solid var(--line);border-radius:14px;padding:14px}
+    input{width:100%;padding:12px;border-radius:10px;border:1px solid #3b4f93;background:#0c1330;color:#eef3ff}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .layout{display:grid;grid-template-columns:1fr 300px;gap:12px}
+    #pieces{touch-action:none}
+    @media (max-width:900px){.layout{grid-template-columns:1fr}}
+    #board{width:100%;height:auto;border-radius:12px;background:#0b1230;border:1px solid #2a3a74;touch-action:none;-ms-touch-action:none;user-select:none;-webkit-user-select:none}
+    .piece canvas{width:auto;height:auto;border:0;background:transparent;border-radius:0}
+    .piece{border:1px solid #324687;background:#0d173b;border-radius:10px;padding:8px;cursor:pointer;touch-action:none;-webkit-user-select:none;user-select:none}
+    .piece.sel{outline:2px solid #80a3ff}
+    .pieceHead{display:flex;justify-content:space-between;align-items:center;font-size:.9rem;margin-bottom:6px}
+    .rank table{width:100%;border-collapse:collapse}
+    .rank th,.rank td{border-bottom:1px solid #2a376a;padding:8px;text-align:left}
+    .pill{padding:4px 8px;border-radius:999px;background:#1b2a58;border:1px solid #375099;font-size:.8rem}
+  </style>
+
+  <script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <header class="top">
+    <strong>🪐 Orbital Blocks</strong>
+    <div class="row">
+      <span id="nickTop" class="pill">Jogador: --</span>
+      <span class="coin">🪙 <span id="coinTop">0</span></span>
+      <button class="btn hidden" id="audioBtn">🔊 Áudio</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="screenMenu" class="card grid">
+      <h2 style="margin:0">Menu Principal</h2>
+      <p class="sub">Escolha um modo e bata seu recorde.</p>
+      <div class="grid menu">
+        <button class="btn primary" data-go="modes">Jogar</button>
+        <button class="btn" data-go="rank">Ranking</button>
+        <button class="btn" data-go="store">Loja</button>
+        <button class="btn" id="changeNick">Trocar Nick</button>
+      </div>
+    </section>
+
+    <section id="screenModes" class="card hidden grid">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Modos de jogo</h2><button class="btn" data-go="menu">Voltar</button></div>
+      <div class="grid menu">
+        <button class="btn danger" data-mode="survival">Sobrevivência<br><small>modo principal</small></button>
+        <button class="btn primary" data-mode="training">Treinamento<br><small>tempo infinito</small></button>
+        <button class="btn warn" data-mode="versus">VS (CPU/Online)<br><small>3, 5 ou 10 rodadas</small></button>
+      </div>
+    </section>
+
+    <section id="screenGame" class="hidden grid">
+      <div class="row" style="justify-content:space-between">
+        <div class="row"><span class="pill" id="hudMode">Modo</span><span class="pill" id="hudLevel">Fase 1</span><span class="pill" id="hudLives">❤️ 3</span></div>
+        <div class="row"><span class="pill" id="hudTimer">⏱️ 00:00</span><span class="pill" id="hudScore">⭐ 0</span><button class="btn" id="exitGame">Sair</button></div>
+      </div>
+      <div class="layout">
+        <div class="card">
+          <canvas id="board" width="640" height="640"></canvas>
+          <p id="msg" class="sub">Arraste as peças. Clique em peça colocada para girar.</p>
+        </div>
+        <div class="card grid">
+          <div id="pieces" class="grid"></div>
+          <button class="btn warn" id="showSolution">Ver solução (🪙1)</button>
+          <button class="btn good" id="newRound">Próxima fase</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screenRank" class="card hidden rank">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ranking local</h2><button class="btn" data-go="menu">Voltar</button></div>
+      <table>
+        <thead><tr><th>#</th><th>Nick</th><th>Modo</th><th>Pontos</th><th>Data</th></tr></thead>
+        <tbody id="rankBody"></tbody>
+      </table>
+    </section>
+
+    <section id="screenStore" class="card hidden grid">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Loja</h2><button class="btn" data-go="menu">Voltar</button></div>
+      <div class="card">
+        <h3 style="margin-top:0">Remover anúncios</h3>
+        <p class="sub">Compra única simbólica: <b>R$ 1,00</b> (simulado no protótipo).</p>
+        <button class="btn primary" id="buyNoAds">Comprar</button>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Continuar partida</h3>
+        <p class="sub">Use moedas no modo Sobrevivência para continuar.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="nickModal" class="modal hidden">
+    <div class="panel grid">
+      <h3 style="margin:0">Escolha seu nick</h3>
+      <input id="nickInput" maxlength="18" placeholder="Escreva seu nick"/>
+      <button class="btn primary" id="saveNick">Salvar</button>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---------- storage ----------
+  const state = {
+    nick: localStorage.getItem('orbital.nick') || '',
+    coins: (()=>{ const raw=localStorage.getItem('orbital.coins'); return raw===null ? 100 : Number(raw||0); })(),
+    noAds: localStorage.getItem('orbital.noads') === '1',
+    ranking: JSON.parse(localStorage.getItem('orbital.rank') || '[]'),
+  };
+  const saveState = () => {
+    localStorage.setItem('orbital.nick', state.nick);
+    localStorage.setItem('orbital.coins', String(state.coins));
+    localStorage.setItem('orbital.noads', state.noAds ? '1' : '0');
+    localStorage.setItem('orbital.rank', JSON.stringify(state.ranking.slice(0,100)));
+  };
+
+  function spendCoin(cost=1){
+    if(state.coins < cost){
+      alert('Moedas insuficientes.');
+      return false;
+    }
+    state.coins -= cost;
+    saveState();
+    refreshTop();
+    return true;
+  }
+
+  // ---------- audio engine (techno progressivo) ----------
+  class AudioEngine {
+    constructor(){ this.ctx=null; this.on=false; this.int=null; this.level=1; this.step=0; this.bpm=102; }
+    async toggle(){
+      if(!this.ctx){ this.ctx = new (window.AudioContext||window.webkitAudioContext)(); }
+      this.on = !this.on;
+      if(this.on){ if(this.ctx.state==='suspended') await this.ctx.resume(); this.start(); }
+      else this.stop();
+      document.getElementById('audioBtn').textContent = this.on ? '🔊 Áudio' : '🔇 Áudio';
+    }
+    setLevel(l){ this.level=Math.max(1,Math.min(6,l)); this.bpm = 100 + this.level*4; }
+    tick(){
+      const t = this.ctx.currentTime;
+      const beat = 60/this.bpm;
+      const k = this.step%4===0;
+      this.kick(t, k?0.23:0.08);
+      if(this.level>=2) this.bass(t+beat*0.02, 110 + (this.step%4)*6, 0.08);
+      if(this.level>=3 && this.step%2===0) this.hat(t+beat*0.03, 0.04);
+      if(this.level>=5 && this.step%4===2) this.arp(t+beat*0.01, 260 + (this.step%8)*20, 0.06);
+      this.step++;
+    }
+    start(){
+      this.stop();
+      this.tick();
+      const ms = (60/this.bpm)*1000;
+      this.int = setInterval(()=>this.tick(), ms);
+    }
+    stop(){ if(this.int){ clearInterval(this.int); this.int=null; } }
+    env(g,a=0.005,d=0.12){ g.gain.setValueAtTime(0,this.ctx.currentTime); g.gain.linearRampToValueAtTime(1,this.ctx.currentTime+a); g.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+d); }
+    kick(t,vol){ const o=this.ctx.createOscillator(),g=this.ctx.createGain(); o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(40,t+0.12); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.14); o.connect(g).connect(this.ctx.destination); o.start(t); o.stop(t+0.16); }
+    bass(t,f,vol){ const o=this.ctx.createOscillator(),g=this.ctx.createGain(); o.type='sawtooth'; o.frequency.value=f; g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.11); o.connect(g).connect(this.ctx.destination); o.start(t); o.stop(t+0.12); }
+    hat(t,vol){ const b=this.ctx.createBuffer(1,2205,this.ctx.sampleRate); const d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; const n=this.ctx.createBufferSource(); const hp=this.ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6000; const g=this.ctx.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.05); n.buffer=b; n.connect(hp).connect(g).connect(this.ctx.destination); n.start(t); }
+    arp(t,f,vol){ const o=this.ctx.createOscillator(),g=this.ctx.createGain(); o.type='triangle'; o.frequency.value=f; g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.08); o.connect(g).connect(this.ctx.destination); o.start(t); o.stop(t+0.08); }
+  }
+  const audio = new AudioEngine();
+
+  // ---------- navigation ----------
+  const screens = ['menu','modes','game','rank','store'];
+  function show(name){
+    screens.forEach(s=>document.getElementById('screen'+s[0].toUpperCase()+s.slice(1)).classList.add('hidden'));
+    document.getElementById('screen'+name[0].toUpperCase()+name.slice(1)).classList.remove('hidden');
+    document.body.classList.toggle('game-active', name==='game');
+    if(name==='rank') renderRanking();
+  }
+
+  // ---------- profile ----------
+  const nickModal = document.getElementById('nickModal');
+  const nickInput = document.getElementById('nickInput');
+  function refreshTop(){
+    document.getElementById('nickTop').textContent = 'Jogador: ' + (state.nick||'--');
+    document.getElementById('coinTop').textContent = state.coins;
+  }
+  function askNick(){ nickInput.value = state.nick; nickModal.classList.remove('hidden'); nickInput.focus(); }
+
+  // ---------- ranking ----------
+  let db = null;
+  async function initFirebase(){
+    try{
+      if(!window.firebase || !window.FIREBASE_CONFIG || !window.FIREBASE_CONFIG.apiKey) return;
+      if(!firebase.apps.length){ firebase.initializeApp(window.FIREBASE_CONFIG); }
+      db = firebase.firestore();
+    }catch(e){ console.warn('Firebase init falhou', e); }
+  }
+
+  async function addRanking(mode, score){
+    // fallback local para não perder pontuação em caso de erro remoto
+    state.ranking.push({nick:(state.nick||'SemNick').slice(0,18), mode, score:Math.max(0,Math.floor(score||0)), at:new Date().toISOString()});
+    state.ranking.sort((a,b)=>b.score-a.score);
+    saveState();
+
+    if(!db) return {ok:false, reason:'Firebase não inicializado'};
+
+    try{
+      await db.collection('scores').add({
+        nick: (state.nick||'SemNick').slice(0,18),
+        mode,
+        score: Math.max(0, Math.floor(score||0)),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      return {ok:true};
+    }catch(e){
+      console.warn('Falha ao salvar score', e);
+      return {ok:false, reason: (e && e.message) ? e.message : 'erro desconhecido'};
+    }
+  }
+
+  async function renderRanking(){
+    const tb=document.getElementById('rankBody');
+    tb.innerHTML='';
+
+    // tenta remoto primeiro
+    if(db){
+      try{
+        const snap = await db.collection('scores').orderBy('score','desc').limit(30).get();
+        let i=1;
+        snap.forEach(doc=>{
+          const r = doc.data() || {};
+          const date = r.createdAt?.toDate ? r.createdAt.toDate() : new Date();
+          const tr=document.createElement('tr');
+          tr.innerHTML=`<td>${i++}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${date.toLocaleDateString()}</td>`;
+          tb.appendChild(tr);
+        });
+        if(tb.children.length) return;
+      }catch(e){
+        console.warn('Ranking remoto falhou, usando local', e);
+      }
+    }
+
+    // fallback local
+    state.ranking.slice(0,30).forEach((r,i)=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${i+1}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${new Date(r.at||Date.now()).toLocaleDateString()}</td>`;
+      tb.appendChild(tr);
+    });
+    if(!tb.children.length){ const tr=document.createElement('tr'); tr.innerHTML='<td colspan="5" class="sub">Sem pontuações ainda.</td>'; tb.appendChild(tr); }
+  }
+
+  // ---------- game core ----------
+  const N=8,CELL=80;
+  const board=document.getElementById('board'); const ctx=board.getContext('2d');
+  const piecesEl=document.getElementById('pieces');
+  const msgEl=document.getElementById('msg');
+  const hudMode=document.getElementById('hudMode');
+  const hudLevel=document.getElementById('hudLevel');
+  const hudLives=document.getElementById('hudLives');
+  const hudTimer=document.getElementById('hudTimer');
+  const hudScore=document.getElementById('hudScore');
+
+  const COLORS=['#59d1ff','#ffcb6b','#f78c6c','#c792ea','#7bd88f','#ff9aa2'];
+  const SHAPES=[
+    [[0,0],[1,0],[0,1]],                 // L3
+    [[0,0],[1,0],[2,0],[1,1]],           // T4
+    [[0,0],[0,1],[1,1],[1,2]],           // Z4
+    [[0,0],[1,0],[2,0],[3,0]],           // I4
+    [[0,0],[1,0],[2,0],[2,1]],           // L4
+    [[0,0],[1,0],[0,1],[1,1]]            // O4
+  ];
+
+  const game = {
+    mode:'training', level:1, score:0, lives:3, sec:0, roundActive:false,
+    puzzleCells:[], pieces:[], placed:[], dragging:null, hover:null,
+    int:null,
+    pendingBoardPiece:null,
+    pendingStart:null,
+    boardDragging:false,
+    vsType:'cpu',
+    vsDifficulty:'medium',
+    vsRounds:3,
+    vsPlayerStars:0,
+    vsCpuStars:0,
+    roundStartMs:0
+  };
+
+  function rotateCoords(c){const r=c.map(([x,y])=>[-y,x]); const minX=Math.min(...r.map(p=>p[0])),minY=Math.min(...r.map(p=>p[1])); return r.map(([x,y])=>[x-minX,y-minY]);}
+  function norm(c){const minX=Math.min(...c.map(p=>p[0])),minY=Math.min(...c.map(p=>p[1])); return c.map(([x,y])=>[x-minX,y-minY]).sort((a,b)=>a[1]-b[1]||a[0]-b[0]);}
+  function rng(seed){let x=seed%2147483647; return ()=> (x=x*48271%2147483647)/2147483647;}
+
+  function survivalRoundTime(level){
+    // inicia em 10s e reduz 0,3s por vitória, com limite mínimo de 3s
+    return Math.max(3, 10 - (level-1)*0.3);
+  }
+
+  function pieceCountForLevel(level){
+    if(level <= 2) return 3;
+    if(level <= 4) return 4;
+    return 5; // máximo solicitado
+  }
+
+  function applyBackgroundByLevel(level){
+    const themes = [
+      'radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%)',
+      'radial-gradient(circle at 80% 0%,#3a1b6b,#070b1a 48%)',
+      'radial-gradient(circle at 50% 0%,#0d4d73,#070b1a 48%)',
+      'radial-gradient(circle at 30% 0%,#5a1a3a,#070b1a 48%)'
+    ];
+    document.body.style.background = themes[(level-1)%themes.length];
+  }
+
+  function startMode(mode){
+    game.mode=mode; game.level=1; game.score=0; game.lives=3;
+    game.vsPlayerStars=0; game.vsCpuStars=0;
+
+    if(mode==='survival') game.sec = 10;
+    else game.sec = 0;
+
+    if(mode==='versus'){
+      const type = (prompt('VS contra quem? Digite: cpu ou online','cpu')||'cpu').toLowerCase();
+      game.vsType = (type==='online') ? 'online' : 'cpu';
+      if(game.vsType==='online') alert('VS online ainda está em beta. Rodando VS contra CPU por enquanto.');
+
+      const diff = (prompt('Dificuldade CPU: easy / medium / hard','medium')||'medium').toLowerCase();
+      game.vsDifficulty = ['easy','medium','hard'].includes(diff) ? diff : 'medium';
+
+      const rounds = parseInt(prompt('Rodadas: 3, 5 ou 10','3')||'3',10);
+      game.vsRounds = [3,5,10].includes(rounds) ? rounds : 3;
+      hudMode.textContent = `VS ${game.vsType==='online'?'ONLINE':'CPU'} (${game.vsRounds}R)`;
+    } else {
+      hudMode.textContent = mode==='training' ? 'Modo: Treinamento' : 'Modo: Sobrevivência';
+    }
+
+    newRound(false);
+    if(game.int) clearInterval(game.int);
+    game.int = setInterval(tick,1000);
+    show('game');
+  }
+
+  function tick(){
+    if(game.mode==='survival'){
+      game.sec--;
+      if(game.sec<=0){
+        game.lives--;
+        if(game.lives<=0){ endRun('Você ficou sem vidas.'); return; }
+        const advance = confirm('Você morreu nesta fase.\nOK = Avançar fase\nCancelar = Repetir fase');
+        if(advance) game.level++;
+        game.sec = survivalRoundTime(game.level);
+        newRound(true);
+      }
+      hudTimer.textContent = '⏱️ ' + fmt(game.sec);
+    } else if(game.mode==='versus'){
+      game.sec++;
+      hudTimer.textContent = '⏱️ ' + fmt(game.sec);
+    } else {
+      // treinamento (infinito)
+      game.sec++;
+      hudTimer.textContent = '⏱️ ∞';
+    }
+
+    hudLives.textContent = (game.mode==='versus')
+      ? `⭐ Você ${game.vsPlayerStars} x ${game.vsCpuStars} CPU`
+      : '❤️ ' + game.lives;
+  }
+  function fmt(s){ const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(Math.max(0,s%60)).padStart(2,'0'); return `${mm}:${ss}`; }
+
+  function newRound(resetTimer=true){
+    if(resetTimer){
+      if(game.mode==='survival') game.sec = survivalRoundTime(game.level);
+    }
+    const rand=rng(Date.now()+game.level*31);
+    game.pieces=[]; game.placed=[]; game.dragging=null; game.hover=null;
+    game.roundStartMs = Date.now();
+    applyBackgroundByLevel(game.level);
+
+    // monta peças aleatórias conforme dificuldade (3 até 5)
+    const pieceCount = pieceCountForLevel(game.level);
+    const pick = [...Array(SHAPES.length).keys()].sort(()=>rand()-0.5).slice(0, pieceCount);
+    pick.forEach((idx,i)=>{
+      const base = norm(SHAPES[idx].map(p=>[...p]));
+      const solutionRot = Math.floor(rand()*4);
+
+      // rotação inicial progressiva por dificuldade:
+      // níveis 1-2: maioria sem rotação
+      // níveis 3-4: rotação moderada
+      // nível 5+: rotação mais frequente
+      let rotateChance = 0.15;
+      if(game.level >= 3) rotateChance = 0.45;
+      if(game.level >= 5) rotateChance = 0.75;
+
+      let startRot = solutionRot;
+      if(rand() < rotateChance){
+        startRot = Math.floor(rand()*4);
+      }
+
+      game.pieces.push({id:i,base,rot:startRot,solutionRot,color:COLORS[i],placed:false});
+    });
+
+    // gera área-alvo SEM sobreposição (sempre solucionável)
+    let ok=false;
+    let merged=[];
+    const totalCells = game.pieces.reduce((s,p)=>s+p.base.length,0);
+
+    for(let attempt=0; attempt<120 && !ok; attempt++){
+      merged=[];
+      const occ = new Set();
+      let fail = false;
+
+      for(const p of game.pieces){
+        let placed=false;
+        for(let tries=0; tries<100 && !placed; tries++){
+          const ax = 1 + Math.floor(rand()*(N-4));
+          const ay = 1 + Math.floor(rand()*(N-4));
+          const cells = shapeAtRot(p, p.solutionRot).map(([x,y])=>[ax+x, ay+y]);
+
+          // dentro da grade e sem sobrepor
+          if(cells.some(([x,y])=>x<0||x>=N||y<0||y>=N)) continue;
+          if(cells.some(c=>occ.has(c.join(',')))) continue;
+
+          cells.forEach(c=>{ occ.add(c.join(',')); merged.push(c); });
+          p.solutionAnchor = [ax, ay];
+          placed=true;
+        }
+        if(!placed){ fail=true; break; }
+      }
+
+      if(!fail && occ.size===totalCells){
+        ok=true;
+        game.puzzleCells = [...occ].map(s=>s.split(',').map(Number));
+      }
+    }
+
+    // fallback seguro (layout fixo sem colisão)
+    if(!ok){
+      const anchors=[[1,1],[4,1],[2,4],[5,4],[1,5]];
+      const occ = new Set();
+      game.pieces.forEach((p,i)=>{
+        const [ax,ay]=anchors[i%anchors.length];
+        p.solutionAnchor = [ax, ay];
+        shapeAtRot(p, p.solutionRot).forEach(([x,y])=>occ.add((ax+x)+','+(ay+y)));
+      });
+      game.puzzleCells = [...occ].map(s=>s.split(',').map(Number));
+    }
+
+    // sanity: se por qualquer motivo divergir, refaz simples
+    if(game.puzzleCells.length !== totalCells){
+      const occ = new Set();
+      const anchors=[[1,1],[4,1],[2,4],[5,4],[1,5]];
+      game.pieces.forEach((p,i)=>{
+        const [ax,ay]=anchors[i%anchors.length];
+        p.solutionAnchor = [ax, ay];
+        shapeAtRot(p, p.solutionRot).forEach(([x,y])=>occ.add((ax+x)+','+(ay+y)));
+      });
+      game.puzzleCells = [...occ].map(s=>s.split(',').map(Number));
+    }
+
+    updateHud(); renderPieces(); draw();
+    msgEl.textContent='Nova fase: arraste e encaixe todas as peças.';
+    audio.setLevel(Math.min(6,1+Math.floor(game.level/2)));
+  }
+
+  function updateHud(){
+    hudLevel.textContent = 'Fase ' + game.level;
+    hudLives.textContent = '❤️ ' + game.lives;
+    hudScore.textContent = '⭐ ' + game.score;
+    hudTimer.textContent = '⏱️ ' + fmt(game.sec);
+    refreshTop();
+  }
+
+  function shapeAtRot(piece, rot){ let c=piece.base.map(p=>[...p]); for(let i=0;i<rot;i++) c=rotateCoords(c); return norm(c); }
+  function shape(piece){ return shapeAtRot(piece, piece.rot); }
+  function cellsAt(piece,anchor){ return shape(piece).map(([x,y])=>[anchor[0]+x,anchor[1]+y]); }
+
+  function validPlacement(pieceId, anchor){
+    const p=game.pieces.find(x=>x.id===pieceId); if(!p) return false;
+    const cells=cellsAt(p,anchor); const target=new Set(game.puzzleCells.map(c=>c.join(',')));
+    for(const c of cells){ const k=c.join(','); if(c[0]<0||c[0]>=N||c[1]<0||c[1]>=N) return false; if(!target.has(k)) return false; }
+    for(const pl of game.placed){ if(pl.pieceId===pieceId) continue; const pp=game.pieces.find(x=>x.id===pl.pieceId); const set=new Set(cellsAt(pp,pl.anchor).map(c=>c.join(','))); for(const c of cells){ if(set.has(c.join(','))) return false; } }
+    return true;
+  }
+  function refreshVal(){ game.placed = game.placed.map(pl=>({...pl, valid: validPlacement(pl.pieceId, pl.anchor)})); }
+
+  function solved(){
+    if(!game.pieces.every(p=>p.placed)) return false;
+    if(!game.placed.every(p=>p.valid)) return false;
+    const target=new Set(game.puzzleCells.map(c=>c.join(',')));
+    const occ=[]; game.placed.forEach(pl=>{ const pp=game.pieces.find(x=>x.id===pl.pieceId); occ.push(...cellsAt(pp,pl.anchor).map(c=>c.join(','))); });
+    const os=new Set(occ); if(os.size!==target.size) return false; for(const k of target) if(!os.has(k)) return false;
+    return true;
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,board.width,board.height);
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){ ctx.strokeStyle='#1f2f66'; ctx.strokeRect(x*CELL,y*CELL,CELL,CELL); }
+
+    const target = new Set(game.puzzleCells.map(c=>c.join(',')));
+    game.puzzleCells.forEach(([x,y])=>{ ctx.fillStyle='rgba(99,255,188,.16)'; ctx.fillRect(x*CELL+2,y*CELL+2,CELL-4,CELL-4); });
+
+    // peças colocadas: só células fora da área alvo ficam vermelhas
+    game.placed.forEach(pl=>{
+      const pp=game.pieces.find(x=>x.id===pl.pieceId);
+      cellsAt(pp,pl.anchor).forEach(([x,y])=>{
+        if(x<0||x>=N||y<0||y>=N) return;
+        const insideTarget = target.has(`${x},${y}`);
+        ctx.fillStyle = insideTarget ? pp.color : '#ff5c7a';
+        ctx.fillRect(x*CELL+5,y*CELL+5,CELL-10,CELL-10);
+      });
+    });
+
+    // peça em arraste: pré-visualização com regra igual
+    if(game.dragging!=null && game.hover){
+      const p=game.pieces.find(x=>x.id===game.dragging);
+      const cells=cellsAt(p,game.hover);
+      ctx.globalAlpha=.55;
+      cells.forEach(([x,y])=>{
+        if(x<0||x>=N||y<0||y>=N) return;
+        const insideTarget = target.has(`${x},${y}`);
+        ctx.fillStyle = insideTarget ? p.color : '#ff5c7a';
+        ctx.fillRect(x*CELL+5,y*CELL+5,CELL-10,CELL-10);
+      });
+      ctx.globalAlpha=1;
+    }
+  }
+
+  function renderPieces(){
+    piecesEl.innerHTML='';
+    game.pieces.forEach((p,idx)=>{
+      const div=document.createElement('div'); div.className='piece';
+      const shp=shape(p), maxX=Math.max(...shp.map(c=>c[0])), maxY=Math.max(...shp.map(c=>c[1]));
+      const boardCellPx = Math.max(8, Math.floor(board.getBoundingClientRect().width / N));
+      const cellPx = Math.max(8, Math.min(16, Math.floor(boardCellPx * 0.55))); // miniatura proporcional
+      const pad = 4;
+      const cv=document.createElement('canvas');
+      cv.width=(maxX+1)*cellPx + pad*2;
+      cv.height=(maxY+1)*cellPx + pad*2;
+      const c=cv.getContext('2d');
+      shp.forEach(([x,y])=>{
+        c.fillStyle=p.color;
+        c.fillRect(pad + x*cellPx, pad + y*cellPx, cellPx-2, cellPx-2);
+      });
+      div.innerHTML=`<div class="pieceHead"><span>Peça ${idx+1}</span><span>${p.placed?'✅':'⬜'}</span></div>`;
+      div.appendChild(cv);
+      div.onclick=()=>{ p.rot=(p.rot+1)%4; refreshVal(); draw(); renderPieces(); if(solved()) winRound(); };
+      div.onpointerdown=(ev)=>{
+        if(p.placed) return; // evita duplicar a mesma peça
+        game.dragging=p.id;
+        game.hover=null;
+        ev.preventDefault();
+      };
+      piecesEl.appendChild(div);
+    });
+  }
+
+  function boardCell(e){ const r=board.getBoundingClientRect(); return [Math.floor((e.clientX-r.left)*board.width/r.width/CELL), Math.floor((e.clientY-r.top)*board.height/r.height/CELL)]; }
+  board.addEventListener('pointerdown',(e)=>{
+    e.preventDefault();
+    const [gx,gy]=boardCell(e);
+    const hit=game.placed.find(pl=>{ const pp=game.pieces.find(x=>x.id===pl.pieceId); return cellsAt(pp,pl.anchor).some(([x,y])=>x===gx&&y===gy);});
+    if(hit){
+      game.pendingBoardPiece = hit;
+      game.pendingStart = [e.clientX, e.clientY];
+      game.boardDragging = false;
+    }
+  });
+
+  board.addEventListener('pointermove',(e)=>{
+    e.preventDefault();
+    if(game.dragging!=null){
+      game.hover=boardCell(e);
+      draw();
+      return;
+    }
+    if(game.pendingBoardPiece && game.pendingStart){
+      const dx=e.clientX-game.pendingStart[0], dy=e.clientY-game.pendingStart[1];
+      if(Math.hypot(dx,dy) > 8){
+        // vira arraste da peça já colocada
+        const hit=game.pendingBoardPiece;
+        game.placed=game.placed.filter(p=>p!==hit);
+        const pp=game.pieces.find(x=>x.id===hit.pieceId);
+        if(pp) pp.placed=false;
+        game.dragging=hit.pieceId;
+        game.hover=boardCell(e);
+        game.boardDragging=true;
+        renderPieces();
+        draw();
+      }
+    }
+  });
+
+  board.addEventListener('pointerup',(e)=>{
+    e.preventDefault();
+    // soltou arraste
+    if(game.dragging!=null){
+      const [gx,gy]=boardCell(e);
+      const p=game.pieces.find(x=>x.id===game.dragging);
+      if(!p || p.placed){
+        game.dragging=null; game.hover=null;
+        game.pendingBoardPiece=null; game.pendingStart=null; game.boardDragging=false;
+        draw();
+        return;
+      }
+      game.placed.push({pieceId:p.id, anchor:[gx,gy], valid:false});
+      p.placed=true;
+      refreshVal();
+      game.dragging=null; game.hover=null;
+      renderPieces(); draw();
+      if(solved()) winRound();
+      game.pendingBoardPiece=null; game.pendingStart=null; game.boardDragging=false;
+      return;
+    }
+
+    // clique simples em peça do tabuleiro => gira só ela
+    if(game.pendingBoardPiece && !game.boardDragging){
+      const pp=game.pieces.find(x=>x.id===game.pendingBoardPiece.pieceId);
+      if(pp){
+        pp.rot=(pp.rot+1)%4;
+        refreshVal();
+        renderPieces();
+        draw();
+        if(solved()) winRound();
+      }
+    }
+    game.pendingBoardPiece=null; game.pendingStart=null; game.boardDragging=false;
+  });
+
+  // reforço mobile (evita scroll da página durante drag)
+  board.addEventListener('touchstart', (e)=>{ e.preventDefault(); }, {passive:false});
+  board.addEventListener('touchmove', (e)=>{ e.preventDefault(); }, {passive:false});
+  board.addEventListener('touchend', (e)=>{ e.preventDefault(); }, {passive:false});
+
+  document.addEventListener('pointerup',()=>{
+    if(game.dragging!=null){ game.dragging=null; game.hover=null; draw(); }
+    game.pendingBoardPiece=null; game.pendingStart=null; game.boardDragging=false;
+  });
+
+  function winRound(){
+    if(game.mode==='versus'){
+      const playerTimeSec = Math.max(1, Math.floor((Date.now()-game.roundStartMs)/1000));
+      const cpuBase = game.vsDifficulty==='easy' ? 14 : game.vsDifficulty==='hard' ? 8 : 11;
+      const cpuTimeSec = Math.max(3, Math.round(cpuBase - Math.min(game.level,6)*0.4 + (Math.random()*4-2)));
+
+      const playerWon = playerTimeSec <= cpuTimeSec;
+      if(playerWon) game.vsPlayerStars++; else game.vsCpuStars++;
+      game.score += playerWon ? 120 : 40;
+      state.coins += playerWon ? 10 : 4;
+
+      const target = Math.ceil(game.vsRounds/2);
+      if(game.vsPlayerStars >= target || game.vsCpuStars >= target){
+        const res = game.vsPlayerStars > game.vsCpuStars ? '🏆 Você venceu a partida VS!' : '💥 CPU venceu a partida VS!';
+        msgEl.innerHTML = `<span style="color:var(--ok)">${res}</span>`;
+        endRun(res);
+        return;
+      }
+
+      game.level++;
+      updateHud();
+      msgEl.innerHTML = `<span style="color:var(--ok)">${playerWon?'Você ganhou':'CPU ganhou'} a rodada (${playerTimeSec}s vs ${cpuTimeSec}s).</span>`;
+      setTimeout(()=>newRound(false), 700);
+      return;
+    }
+
+    game.score += 100 + Math.max(0, 40 - Math.floor(game.sec/3));
+    state.coins += 12;
+    game.level++;
+
+    if(game.mode==='survival'){
+      game.sec = survivalRoundTime(game.level);
+    }
+
+    updateHud();
+    msgEl.innerHTML='<span style="color:var(--ok)">Fase concluída! +pontos +moedas.</span>';
+    setTimeout(()=>newRound(game.mode==='survival'), 600);
+  }
+
+  async function endRun(reason){
+    clearInterval(game.int);
+    const saved = await addRanking(game.mode, game.score);
+    msgEl.innerHTML = `<span style="color:var(--bad)">${reason}</span>`;
+    if(saved && !saved.ok){
+      alert(`${reason}\nPontuação: ${game.score}\n\nAviso: ranking online falhou (${saved.reason}).\nA pontuação foi salva localmente neste aparelho.`);
+    } else {
+      alert(`${reason}\nPontuação: ${game.score}`);
+    }
+    show('menu');
+  }
+
+  // ---------- events ----------
+  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>show(b.dataset.go));
+  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>startMode(b.dataset.mode));
+  document.getElementById('showSolution').onclick=()=>{
+    if(!spendCoin(1)) return;
+    game.placed = [];
+    game.pieces.forEach(p=>{
+      if(!p.solutionAnchor) return;
+      p.rot = p.solutionRot;
+      p.placed = true;
+      game.placed.push({pieceId:p.id, anchor:[...p.solutionAnchor], valid:true});
+    });
+    refreshVal();
+    renderPieces();
+    draw();
+    msgEl.textContent='Solução exibida (🪙1). Pontuação não é contabilizada nesta fase.';
+    // não pontua automaticamente ao ver solução
+  };
+  document.getElementById('newRound').onclick=()=>newRound();
+  document.getElementById('exitGame').onclick=()=>{
+    clearInterval(game.int);
+    // não trava navegação por causa da rede
+    addRanking(game.mode, game.score).catch(()=>{});
+    show('menu');
+  };
+  document.getElementById('audioBtn').onclick=()=>audio.toggle();
+  document.getElementById('changeNick').onclick=askNick;
+  document.getElementById('saveNick').onclick=()=>{
+    const n=nickInput.value.trim(); if(!n) return;
+    state.nick=n.slice(0,18); saveState(); refreshTop(); nickModal.classList.add('hidden');
+  };
+  document.getElementById('buyNoAds').onclick=()=>{ state.noAds=true; saveState(); alert('Compra simulada concluída: anúncios removidos.'); };
+
+  // ---------- init ----------
+  if(localStorage.getItem('orbital.coins')===null){ saveState(); }
+  initFirebase();
+  if(!state.nick) askNick();
+  refreshTop(); show('menu');
+})();
+</script>
+</body>
+</html>
