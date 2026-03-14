@@ -222,8 +222,10 @@
     const isSurvival = game.mode==='survival';
     const rowA=document.getElementById('survivalHelpRow');
     const rowT=document.getElementById('survivalTimeRow');
+    const btnSol=document.getElementById('showSolution');
     if(rowA) rowA.style.display = isSurvival ? 'flex' : 'none';
     if(rowT) rowT.style.display = isSurvival ? 'flex' : 'none';
+    if(btnSol) btnSol.style.display = game.mode==='training' ? '' : 'none';
     const cA=document.getElementById('helpAutoCount'); if(cA) cA.textContent = 'x'+(state.helps.autoplace||0);
     const cT=document.getElementById('helpTimeCount'); if(cT) cT.textContent = 'x'+(state.helps.time||0);
     updateStoreCounts();
@@ -330,7 +332,8 @@
     vsRounds:3,
     vsPlayerStars:0,
     vsCpuStars:0,
-    roundStartMs:0
+    roundStartMs:0,
+    solutionLocked:false
   };
 
   function rotateCoords(c){const r=c.map(([x,y])=>[-y,x]); const minX=Math.min(...r.map(p=>p[0])),minY=Math.min(...r.map(p=>p[1])); return r.map(([x,y])=>[x-minX,y-minY]);}
@@ -350,15 +353,18 @@
 
   function applyBackgroundByLevel(level){
     const themes = [
-      'radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%)', // azul escuro
-      'radial-gradient(circle at 20% 0%,#174830,#070b1a 45%)', // verde escuro
-      'radial-gradient(circle at 20% 0%,#3b1d5b,#070b1a 45%)', // roxo
-      'radial-gradient(circle at 20% 0%,#5a4717,#070b1a 45%)', // dourado escuro
-      'radial-gradient(circle at 20% 0%,#5a2f17,#070b1a 45%)', // laranja escuro
-      'radial-gradient(circle at 20% 0%,#4a141d,#070b1a 45%)'  // vermelho escuro
+      {bg:'radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%)', board:'#0b1230', line:'#8ea7ff'},
+      {bg:'radial-gradient(circle at 20% 0%,#174830,#070b1a 45%)', board:'#0b2519', line:'#7adba8'},
+      {bg:'radial-gradient(circle at 20% 0%,#3b1d5b,#070b1a 45%)', board:'#201034', line:'#c59cff'},
+      {bg:'radial-gradient(circle at 20% 0%,#5a4717,#070b1a 45%)', board:'#2b2210', line:'#ffd36b'},
+      {bg:'radial-gradient(circle at 20% 0%,#5a2f17,#070b1a 45%)', board:'#2e180f', line:'#ffb37a'},
+      {bg:'radial-gradient(circle at 20% 0%,#4a141d,#070b1a 45%)', board:'#2a0f16', line:'#ff8fa2'}
     ];
     const idx = Math.floor((Math.max(1,level)-1)/3) % themes.length;
-    document.body.style.background = themes[idx];
+    const t = themes[idx];
+    document.body.style.background = t.bg;
+    board.style.background = t.board;
+    board.dataset.divider = t.line;
   }
 
   function startMode(mode){
@@ -413,6 +419,20 @@
   }
   function fmt(s){ const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(Math.max(0,Math.floor(s%60))).padStart(2,'0'); return `${mm}:${ss}`; }
 
+  function revealSolution(lock=true){
+    game.placed = [];
+    game.pieces.forEach(p=>{
+      if(!p.solutionAnchor) return;
+      p.rot = p.solutionRot;
+      p.placed = true;
+      game.placed.push({pieceId:p.id, anchor:[...p.solutionAnchor], valid:true});
+    });
+    game.solutionLocked = !!lock;
+    refreshVal();
+    renderPieces();
+    draw();
+  }
+
   async function handleSurvivalDeath(){
     const scoreBefore = game.score;
     const levelBefore = game.level;
@@ -433,6 +453,13 @@
       }
     }
 
+    const seeSolution = confirm('Você morreu. Deseja ver a solução desta fase?');
+    if(seeSolution){
+      revealSolution(true);
+      msgEl.innerHTML = '<span style="color:var(--warn)">Solução exibida. Clique em Próxima fase para continuar.</span>';
+      return;
+    }
+
     endRun('Fim de jogo!', false);
   }
 
@@ -441,6 +468,7 @@
       // reservado para outros modos
     }
     const rand=rng(Date.now()+game.level*31);
+    game.solutionLocked=false;
     game.pieces=[]; game.placed=[]; game.dragging=null; game.hover=null;
     game.roundStartMs = Date.now();
     applyBackgroundByLevel(game.level);
@@ -609,7 +637,7 @@
     for(let y=0;y<N;y++) for(let x=0;x<N;x++){ ctx.strokeStyle='#1f2f66'; ctx.strokeRect(x*CELL,y*CELL,CELL,CELL); }
 
     // linha divisória entre área de jogo e spawn
-    ctx.strokeStyle = '#8ea7ff';
+    ctx.strokeStyle = board.dataset.divider || '#8ea7ff';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(0, GAME_ROWS*CELL);
@@ -677,9 +705,9 @@
       });
       div.innerHTML=`<div class="pieceHead"><span>Peça ${idx+1}</span><span>${p.placed?'✅':'⬜'}</span></div>`;
       div.appendChild(cv);
-      div.onclick=()=>{ p.rot=(p.rot+1)%4; refreshVal(); draw(); renderPieces(); if(solved()) winRound(); };
+      div.onclick=()=>{ if(game.solutionLocked) return; p.rot=(p.rot+1)%4; refreshVal(); draw(); renderPieces(); if(solved()) winRound(); };
       div.onpointerdown=(ev)=>{
-        if(p.placed) return;
+        if(game.solutionLocked || p.placed) return;
         game.dragging=p.id;
         game.hover=null;
         ev.preventDefault();
@@ -690,6 +718,7 @@
 
   function boardCell(e){ const r=board.getBoundingClientRect(); return [Math.floor((e.clientX-r.left)*board.width/r.width/CELL), Math.floor((e.clientY-r.top)*board.height/r.height/CELL)]; }
   board.addEventListener('pointerdown',(e)=>{
+    if(game.solutionLocked) return;
     e.preventDefault();
     const [gx,gy]=boardCell(e);
     const hit=game.placed.find(pl=>{ const pp=game.pieces.find(x=>x.id===pl.pieceId); return cellsAt(pp,pl.anchor).some(([x,y])=>x===gx&&y===gy);});
@@ -701,6 +730,7 @@
   });
 
   board.addEventListener('pointermove',(e)=>{
+    if(game.solutionLocked) return;
     e.preventDefault();
     if(game.dragging!=null){
       game.hover=boardCell(e);
@@ -725,6 +755,7 @@
   });
 
   board.addEventListener('pointerup',(e)=>{
+    if(game.solutionLocked) return;
     e.preventDefault();
     // soltou arraste
     if(game.dragging!=null){
@@ -818,21 +849,21 @@
   document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>show(b.dataset.go));
   document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>startMode(b.dataset.mode));
   document.getElementById('showSolution').onclick=()=>{
+    if(game.mode!=='training') return;
     if(!spendCoin(1)) return;
-    game.placed = [];
-    game.pieces.forEach(p=>{
-      if(!p.solutionAnchor) return;
-      p.rot = p.solutionRot;
-      p.placed = true;
-      game.placed.push({pieceId:p.id, anchor:[...p.solutionAnchor], valid:true});
-    });
-    refreshVal();
-    renderPieces();
-    draw();
-    msgEl.textContent='Solução exibida (🪙1). Pontuação não é contabilizada nesta fase.';
-    // não pontua automaticamente ao ver solução
+    revealSolution(true);
+    msgEl.textContent='Solução exibida. Peças travadas até clicar em Próxima fase.';
   };
-  document.getElementById('newRound').onclick=()=>newRound(false);
+  document.getElementById('newRound').onclick=()=>{
+    if(game.mode==='survival' && game.solutionLocked){
+      game.level++;
+      game.sec += survivalRoundBonus(game.level);
+      newRound(false);
+      if(!game.int) game.int = setInterval(tick,1000);
+      return;
+    }
+    newRound(false);
+  };
   document.getElementById('exitGame').onclick=()=>{
     clearInterval(game.int);
     addRanking(game.mode, game.score, game.level).catch(()=>{});
