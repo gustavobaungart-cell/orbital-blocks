@@ -7,8 +7,7 @@
   <style>
     :root{--bg:#070b1a;--card:#121a34;--ink:#ecf1ff;--muted:#9fb0e0;--line:#2c3b77;--pri:#59d1ff;--ok:#42d392;--bad:#ff6b6b}
     *{box-sizing:border-box;font-family:Inter,system-ui,Arial}
-    body{margin:0;background:radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%);color:var(--ink);min-height:100vh;overscroll-behavior:none}
-    body.game-active{overflow:hidden;touch-action:none}
+    body{margin:0;background:radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%);color:var(--ink);min-height:100vh;overscroll-behavior:auto}
     .top{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #223163;background:#0c1430;position:sticky;top:0;z-index:3}
     .coin{color:#ffe28a;font-weight:700}
     .container{max-width:1100px;margin:0 auto;padding:14px}
@@ -39,7 +38,7 @@
     .pill{padding:4px 8px;border-radius:999px;background:#1b2a58;border:1px solid #375099;font-size:.8rem}
   </style>
 
-  <script src="./firebase-config.public.js"></script>
+  <script src="./firebase-config.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 </head>
@@ -190,7 +189,6 @@
   function show(name){
     screens.forEach(s=>document.getElementById('screen'+s[0].toUpperCase()+s.slice(1)).classList.add('hidden'));
     document.getElementById('screen'+name[0].toUpperCase()+name.slice(1)).classList.remove('hidden');
-    document.body.classList.toggle('game-active', name==='game');
     if(name==='rank') renderRanking();
   }
 
@@ -307,8 +305,8 @@
   function rng(seed){let x=seed%2147483647; return ()=> (x=x*48271%2147483647)/2147483647;}
 
   function survivalRoundTime(level){
-    // inicia em 10s e reduz 0,3s por vitória, com limite mínimo de 3s
-    return Math.max(3, 10 - (level-1)*0.3);
+    // inicia em 20s e reduz 1s por vitória, limite mínimo 8s
+    return Math.max(8, 20 - (level-1));
   }
 
   function pieceCountForLevel(level){
@@ -331,7 +329,7 @@
     game.mode=mode; game.level=1; game.score=0; game.lives=3;
     game.vsPlayerStars=0; game.vsCpuStars=0;
 
-    if(mode==='survival') game.sec = 10;
+    if(mode==='survival') game.sec = 20;
     else game.sec = 0;
 
     if(mode==='versus'){
