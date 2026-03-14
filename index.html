@@ -70,6 +70,7 @@
         <button class="btn danger" data-mode="survival">Sobrevivência<br><small>modo principal</small></button>
         <button class="btn primary" data-mode="training">Treinamento<br><small>tempo infinito</small></button>
         <button class="btn warn" data-mode="versus">VS (CPU/Online)<br><small>3, 5 ou 10 rodadas</small></button>
+        <button class="btn" data-mode="daily">Desafio diário<br><small>6 peças, muda a cada 24h</small></button>
       </div>
     </section>
 
@@ -130,6 +131,14 @@
     </div>
   </div>
 
+  <div id="actionModal" class="modal hidden">
+    <div class="panel grid">
+      <h3 id="actionTitle" style="margin:0">Ação</h3>
+      <p id="actionText" class="sub"></p>
+      <div id="actionButtons" class="row"></div>
+    </div>
+  </div>
+
 <script>
 (() => {
   // ---------- storage ----------
@@ -139,6 +148,7 @@
     noAds: localStorage.getItem('orbital.noads') === '1',
     ranking: JSON.parse(localStorage.getItem('orbital.rank') || '[]'),
     helps: JSON.parse(localStorage.getItem('orbital.helps') || '{"continue":0,"autoplace":0,"time":0}'),
+    daily: JSON.parse(localStorage.getItem('orbital.daily') || '{"lastWinDay":"","bestTime":null}'),
   };
   const saveState = () => {
     localStorage.setItem('orbital.nick', state.nick);
@@ -146,6 +156,7 @@
     localStorage.setItem('orbital.noads', state.noAds ? '1' : '0');
     localStorage.setItem('orbital.rank', JSON.stringify(state.ranking.slice(0,100)));
     localStorage.setItem('orbital.helps', JSON.stringify(state.helps));
+    localStorage.setItem('orbital.daily', JSON.stringify(state.daily));
   };
 
   function spendCoin(cost=1){
@@ -212,6 +223,29 @@
   }
   function askNick(){ nickInput.value = state.nick; nickModal.classList.remove('hidden'); nickInput.focus(); }
 
+  function dayKey(){ return new Date().toISOString().slice(0,10); }
+  function daySeed(key){ return [...key].reduce((a,c)=>a + c.charCodeAt(0)*17, 1337); }
+
+  function askModal(title, text, buttons){
+    const modal=document.getElementById('actionModal');
+    const t=document.getElementById('actionTitle');
+    const d=document.getElementById('actionText');
+    const wrap=document.getElementById('actionButtons');
+    t.textContent=title;
+    d.textContent=text||'';
+    wrap.innerHTML='';
+    return new Promise(resolve=>{
+      buttons.forEach(b=>{
+        const bt=document.createElement('button');
+        bt.className='btn ' + (b.className||'');
+        bt.textContent=b.label;
+        bt.onclick=()=>{ modal.classList.add('hidden'); resolve(b.id); };
+        wrap.appendChild(bt);
+      });
+      modal.classList.remove('hidden');
+    });
+  }
+
   function updateStoreCounts(){
     const sc=document.getElementById('storeContinueCount'); if(sc) sc.textContent=state.helps.continue||0;
     const sa=document.getElementById('storeAutoCount'); if(sa) sa.textContent=state.helps.autoplace||0;
@@ -264,6 +298,13 @@
       console.warn('Falha ao salvar score', e);
       return {ok:false, reason: (e && e.message) ? e.message : 'erro desconhecido'};
     }
+  }
+
+  async function saveSurvivalScoreOnce(score, level){
+    if(game.runSaved) return {ok:true, skipped:true};
+    const out = await addRanking('survival', score, level);
+    game.runSaved = true;
+    return out;
   }
 
   async function renderRanking(){
@@ -333,7 +374,9 @@
     vsPlayerStars:0,
     vsCpuStars:0,
     roundStartMs:0,
-    solutionLocked:false
+    solutionLocked:false,
+    runSaved:false,
+    dailyKey:''
   };
 
   function rotateCoords(c){const r=c.map(([x,y])=>[-y,x]); const minX=Math.min(...r.map(p=>p[0])),minY=Math.min(...r.map(p=>p[1])); return r.map(([x,y])=>[x-minX,y-minY]);}
@@ -370,6 +413,8 @@
   function startMode(mode){
     game.mode=mode; game.level=1; game.score=0; game.lives=0;
     game.vsPlayerStars=0; game.vsCpuStars=0;
+    game.solutionLocked=false;
+    game.runSaved=false;
 
     if(mode==='survival') game.sec = 25;
     else game.sec = 0;
@@ -385,6 +430,9 @@
       const rounds = parseInt(prompt('Rodadas: 3, 5 ou 10','3')||'3',10);
       game.vsRounds = [3,5,10].includes(rounds) ? rounds : 3;
       hudMode.textContent = `VS ${game.vsType==='online'?'ONLINE':'CPU'} (${game.vsRounds}R)`;
+    } else if(mode==='daily'){
+      game.dailyKey = dayKey();
+      hudMode.textContent = 'Modo: Desafio diário';
     } else {
       hudMode.textContent = mode==='training' ? 'Modo: Treinamento' : 'Modo: Sobrevivência';
     }
@@ -405,7 +453,7 @@
         return;
       }
       hudTimer.textContent = '⏱️ ' + fmt(game.sec);
-    } else if(game.mode==='versus'){
+    } else if(game.mode==='versus' || game.mode==='daily'){
       game.sec++;
       hudTimer.textContent = '⏱️ ' + fmt(game.sec);
     } else {
@@ -436,25 +484,30 @@
   async function handleSurvivalDeath(){
     const scoreBefore = game.score;
     const levelBefore = game.level;
-    await addRanking('survival', scoreBefore, levelBefore);
+    await saveSurvivalScoreOnce(scoreBefore, levelBefore);
 
+    const buttons = [];
     if((state.helps.continue||0) > 0){
-      const usePower = confirm(`Você morreu.\nGostaria de usar um poder e continuar sem zerar a pontuação?\n(Disponível: ${state.helps.continue})`);
-      if(usePower){
-        state.helps.continue = Math.max(0, (state.helps.continue||0) - 1);
-        game.sec = survivalRoundBonus(game.level);
-        saveState();
-        updateHud();
-        updateHelpUI();
-        msgEl.innerHTML = '<span style="color:var(--ok)">Poder de continuação usado. Jogo retomado!</span>';
-        newRound(false);
-        game.int = setInterval(tick,1000);
-        return;
-      }
+      buttons.push({id:'continue', label:`💖 Usar poder e continuar (${state.helps.continue})`, className:'good'});
+    }
+    buttons.push({id:'solution', label:'🧠 Ver solução da fase', className:'warn'});
+    buttons.push({id:'end', label:'Encerrar', className:'danger'});
+
+    const action = await askModal('Você morreu', 'Escolha uma opção para seguir no modo sobrevivência.', buttons);
+
+    if(action==='continue'){
+      state.helps.continue = Math.max(0, (state.helps.continue||0) - 1);
+      game.sec = survivalRoundBonus(game.level);
+      saveState();
+      updateHud();
+      updateHelpUI();
+      msgEl.innerHTML = '<span style="color:var(--ok)">Poder de continuação usado. Jogo retomado!</span>';
+      newRound(false);
+      game.int = setInterval(tick,1000);
+      return;
     }
 
-    const seeSolution = confirm('Você morreu. Deseja ver a solução desta fase?');
-    if(seeSolution){
+    if(action==='solution'){
       revealSolution(true);
       msgEl.innerHTML = '<span style="color:var(--warn)">Solução exibida. Clique em Próxima fase para continuar.</span>';
       return;
@@ -467,14 +520,15 @@
     if(resetTimer){
       // reservado para outros modos
     }
-    const rand=rng(Date.now()+game.level*31);
+    const seedBase = (game.mode==='daily') ? daySeed(game.dailyKey || dayKey()) : (Date.now()+game.level*31);
+    const rand=rng(seedBase);
     game.solutionLocked=false;
     game.pieces=[]; game.placed=[]; game.dragging=null; game.hover=null;
     game.roundStartMs = Date.now();
     applyBackgroundByLevel(game.level);
 
-    // monta peças aleatórias conforme dificuldade (3 até 5)
-    const pieceCount = pieceCountForLevel(game.level);
+    // monta peças aleatórias conforme dificuldade
+    const pieceCount = game.mode==='daily' ? 6 : pieceCountForLevel(game.level);
     const pick = [...Array(SHAPES.length).keys()].sort(()=>rand()-0.5).slice(0, pieceCount);
     pick.forEach((idx,i)=>{
       const base = norm(SHAPES[idx].map(p=>[...p]));
@@ -487,6 +541,7 @@
       let rotateChance = 0.15;
       if(game.level >= 3) rotateChance = 0.45;
       if(game.level >= 5) rotateChance = 0.75;
+      if(game.mode==='daily') rotateChance = 0.95;
 
       let startRot = solutionRot;
       if(rand() < rotateChance){
@@ -821,6 +876,24 @@
       return;
     }
 
+    if(game.mode==='daily'){
+      const elapsed = Math.max(1, Math.floor((Date.now()-game.roundStartMs)/1000));
+      const reward = Math.max(5, Math.min(20, Math.round(20 - (elapsed/6))));
+      const today = dayKey();
+      if(state.daily.lastWinDay !== today){
+        state.coins += reward;
+        state.daily.lastWinDay = today;
+        state.daily.bestTime = elapsed;
+        saveState();
+        msgEl.innerHTML = `<span style="color:var(--ok)">Desafio diário concluído em ${elapsed}s. Recompensa: 🪙${reward}</span>`;
+      } else {
+        msgEl.innerHTML = `<span style="color:var(--ok)">Desafio diário já concluído hoje. Tempo: ${elapsed}s.</span>`;
+      }
+      updateHud();
+      endRun('Desafio diário concluído!', false);
+      return;
+    }
+
     game.score += 100 + Math.max(0, 40 - Math.floor(game.sec/3));
     game.level++;
 
@@ -835,13 +908,15 @@
 
   async function endRun(reason, saveScore=true){
     clearInterval(game.int);
-    const saved = saveScore ? await addRanking(game.mode, game.score, game.level) : {ok:true};
+    const shouldSave = saveScore && game.mode==='survival';
+    const saved = shouldSave ? await saveSurvivalScoreOnce(game.score, game.level) : {ok:true};
     msgEl.innerHTML = `<span style="color:var(--bad)">${reason}</span>`;
-    if(saveScore && saved && !saved.ok){
-      alert(`${reason}\nPontuação: ${game.score}\n\nAviso: ranking online falhou (${saved.reason}).\nA pontuação foi salva localmente neste aparelho.`);
-    } else {
-      alert(`${reason}\nPontuação: ${game.score}`);
+
+    let text = `${reason}\nPontuação: ${game.score}`;
+    if(shouldSave && saved && !saved.ok){
+      text += `\n\nAviso: ranking online falhou (${saved.reason}).\nA pontuação foi salva localmente neste aparelho.`;
     }
+    await askModal('Fim da partida', text, [{id:'menu', label:'Voltar ao menu', className:'primary'}]);
     show('menu');
   }
 
@@ -864,9 +939,9 @@
     }
     newRound(false);
   };
-  document.getElementById('exitGame').onclick=()=>{
+  document.getElementById('exitGame').onclick=async ()=>{
     clearInterval(game.int);
-    addRanking(game.mode, game.score, game.level).catch(()=>{});
+    if(game.mode==='survival') await saveSurvivalScoreOnce(game.score, game.level);
     show('menu');
   };
 
