@@ -75,7 +75,7 @@
 
     <section id="screenGame" class="hidden grid">
       <div class="row" style="justify-content:space-between">
-        <div class="row"><span class="pill" id="hudMode">Modo</span><span class="pill" id="hudLevel">Fase 1</span><span class="pill" id="hudLives">❤️ 3</span></div>
+        <div class="row"><span class="pill" id="hudMode">Modo</span><span class="pill" id="hudLevel">Fase 1</span><span class="pill" id="hudLives">🪙 0</span></div>
         <div class="row"><span class="pill" id="hudTimer">⏱️ 00:00</span><span class="pill" id="hudScore">⭐ 0</span><button class="btn" id="exitGame">Sair</button></div>
       </div>
       <div class="layout">
@@ -92,7 +92,7 @@
     </section>
 
     <section id="screenRank" class="card hidden rank">
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ranking local</h2><button class="btn" data-go="menu">Voltar</button></div>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ranking ONLINE</h2><button class="btn" data-go="menu">Voltar</button></div>
       <table>
         <thead><tr><th>#</th><th>Nick</th><th>Modo</th><th>Pontos</th><th>Data</th></tr></thead>
         <tbody id="rankBody"></tbody>
@@ -265,7 +265,9 @@
   }
 
   // ---------- game core ----------
-  const N=8,CELL=80;
+  const N=10,CELL=64;
+  const SPAWN_ROWS=4;
+  const GAME_ROWS=N-SPAWN_ROWS;
   const board=document.getElementById('board'); const ctx=board.getContext('2d');
   const piecesEl=document.getElementById('pieces');
   const msgEl=document.getElementById('msg');
@@ -286,7 +288,7 @@
   ];
 
   const game = {
-    mode:'training', level:1, score:0, lives:3, sec:0, roundActive:false,
+    mode:'training', level:1, score:0, lives:0, sec:0, roundActive:false,
     puzzleCells:[], pieces:[], placed:[], dragging:null, hover:null,
     int:null,
     pendingBoardPiece:null,
@@ -326,7 +328,7 @@
   }
 
   function startMode(mode){
-    game.mode=mode; game.level=1; game.score=0; game.lives=3;
+    game.mode=mode; game.level=1; game.score=0; game.lives=0;
     game.vsPlayerStars=0; game.vsCpuStars=0;
 
     if(mode==='survival') game.sec = 20;
@@ -357,12 +359,9 @@
     if(game.mode==='survival'){
       game.sec--;
       if(game.sec<=0){
-        game.lives--;
-        if(game.lives<=0){ endRun('Você ficou sem vidas.'); return; }
-        const advance = confirm('Você morreu nesta fase.\nOK = Avançar fase\nCancelar = Repetir fase');
-        if(advance) game.level++;
-        game.sec = survivalRoundTime(game.level);
-        newRound(true);
+        clearInterval(game.int);
+        handleSurvivalDeath();
+        return;
       }
       hudTimer.textContent = '⏱️ ' + fmt(game.sec);
     } else if(game.mode==='versus'){
@@ -376,9 +375,30 @@
 
     hudLives.textContent = (game.mode==='versus')
       ? `⭐ Você ${game.vsPlayerStars} x ${game.vsCpuStars} CPU`
-      : '❤️ ' + game.lives;
+      : `🪙 ${state.coins}`;
   }
   function fmt(s){ const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(Math.max(0,s%60)).padStart(2,'0'); return `${mm}:${ss}`; }
+
+  async function handleSurvivalDeath(){
+    const scoreBefore = game.score;
+    await addRanking('survival', scoreBefore);
+
+    const canContinue = state.coins >= 1 && confirm(`Você morreu.\nPontuação ${scoreBefore} registrada no ranking.\nContinuar do nível atual por 🪙1?\n(Se continuar, seus pontos zeram)`);
+
+    if(canContinue){
+      state.coins = Math.max(0, state.coins - 1);
+      game.score = 0;
+      game.sec = survivalRoundTime(game.level);
+      saveState();
+      updateHud();
+      msgEl.innerHTML = '<span style="color:var(--warn)">Continuação ativada (🪙1). Pontos resetados.</span>';
+      newRound(true);
+      game.int = setInterval(tick,1000);
+      return;
+    }
+
+    endRun('Fim de jogo!', false);
+  }
 
   function newRound(resetTimer=true){
     if(resetTimer){
@@ -426,11 +446,11 @@
         let placed=false;
         for(let tries=0; tries<100 && !placed; tries++){
           const ax = 1 + Math.floor(rand()*(N-4));
-          const ay = 1 + Math.floor(rand()*(N-4));
+          const ay = Math.floor(rand()*Math.max(1, GAME_ROWS-3));
           const cells = shapeAtRot(p, p.solutionRot).map(([x,y])=>[ax+x, ay+y]);
 
-          // dentro da grade e sem sobrepor
-          if(cells.some(([x,y])=>x<0||x>=N||y<0||y>=N)) continue;
+          // dentro da grade, na área de jogo (topo) e sem sobrepor
+          if(cells.some(([x,y])=>x<0||x>=N||y<0||y>=GAME_ROWS)) continue;
           if(cells.some(c=>occ.has(c.join(',')))) continue;
 
           cells.forEach(c=>{ occ.add(c.join(',')); merged.push(c); });
@@ -478,9 +498,10 @@
       let placedStart = false;
       for(let t=0;t<240 && !placedStart;t++){
         const ax = Math.floor(rand()*N);
-        const ay = Math.floor(rand()*N);
+        const ay = GAME_ROWS + Math.floor(rand()*SPAWN_ROWS);
         const cells = cellsAt(p,[ax,ay]);
         if(cells.some(([x,y])=>x<0||x>=N||y<0||y>=N)) continue;
+        if(cells.some(([x,y])=>y < GAME_ROWS)) continue; // mantém surgimento só na faixa inferior
         if(cells.some(([x,y])=>targetSet.has(`${x},${y}`))) continue;
         if(cells.some(([x,y])=>occStart.has(`${x},${y}`))) continue;
         cells.forEach(([x,y])=>occStart.add(`${x},${y}`));
@@ -491,7 +512,7 @@
       if(!placedStart){
         // fallback simples se não achar espaço perfeito
         const ax = (i*2) % Math.max(1, N-2);
-        const ay = N-2 - (i%2);
+        const ay = GAME_ROWS + (i % Math.max(1, SPAWN_ROWS-1));
         game.placed.push({pieceId:p.id, anchor:[ax,ay], valid:false});
         p.placed = true;
       }
@@ -499,15 +520,17 @@
     refreshVal();
 
     updateHud(); renderPieces(); draw();
-    msgEl.textContent='Nova fase: arraste e encaixe todas as peças.';
+    msgEl.textContent='Nova fase: peças surgem na faixa inferior; arraste para a área de jogo e toque para girar.';
     audio.setLevel(Math.min(6,1+Math.floor(game.level/2)));
   }
 
   function updateHud(){
     hudLevel.textContent = 'Fase ' + game.level;
-    hudLives.textContent = '❤️ ' + game.lives;
+    hudLives.textContent = (game.mode==='versus')
+      ? `⭐ Você ${game.vsPlayerStars} x ${game.vsCpuStars} CPU`
+      : `🪙 ${state.coins}`;
     hudScore.textContent = '⭐ ' + game.score;
-    hudTimer.textContent = '⏱️ ' + fmt(game.sec);
+    hudTimer.textContent = game.mode==='training' ? '⏱️ ∞' : ('⏱️ ' + fmt(game.sec));
     refreshTop();
   }
 
@@ -535,31 +558,52 @@
 
   function draw(){
     ctx.clearRect(0,0,board.width,board.height);
+
+    // faixa de spawn (4 linhas inferiores)
+    ctx.fillStyle = 'rgba(255,255,255,.05)';
+    ctx.fillRect(0, GAME_ROWS*CELL, board.width, SPAWN_ROWS*CELL);
+
     for(let y=0;y<N;y++) for(let x=0;x<N;x++){ ctx.strokeStyle='#1f2f66'; ctx.strokeRect(x*CELL,y*CELL,CELL,CELL); }
+
+    // linha divisória entre área de jogo e spawn
+    ctx.strokeStyle = '#8ea7ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, GAME_ROWS*CELL);
+    ctx.lineTo(board.width, GAME_ROWS*CELL);
+    ctx.stroke();
+    ctx.lineWidth = 1;
 
     const target = new Set(game.puzzleCells.map(c=>c.join(',')));
     game.puzzleCells.forEach(([x,y])=>{ ctx.fillStyle='rgba(99,255,188,.16)'; ctx.fillRect(x*CELL+2,y*CELL+2,CELL-4,CELL-4); });
 
-    // peças colocadas: só células fora da área alvo ficam vermelhas
+    // cores: spawn normal; área de jogo fora do alvo = vermelho
     game.placed.forEach(pl=>{
       const pp=game.pieces.find(x=>x.id===pl.pieceId);
       cellsAt(pp,pl.anchor).forEach(([x,y])=>{
         if(x<0||x>=N||y<0||y>=N) return;
-        const insideTarget = target.has(`${x},${y}`);
-        ctx.fillStyle = insideTarget ? pp.color : '#ff5c7a';
+        if(y>=GAME_ROWS){
+          ctx.fillStyle = pp.color;
+        } else {
+          const insideTarget = target.has(`${x},${y}`);
+          ctx.fillStyle = insideTarget ? pp.color : '#ff5c7a';
+        }
         ctx.fillRect(x*CELL+5,y*CELL+5,CELL-10,CELL-10);
       });
     });
 
-    // peça em arraste: pré-visualização com regra igual
     if(game.dragging!=null && game.hover){
       const p=game.pieces.find(x=>x.id===game.dragging);
       const cells=cellsAt(p,game.hover);
       ctx.globalAlpha=.55;
       cells.forEach(([x,y])=>{
         if(x<0||x>=N||y<0||y>=N) return;
-        const insideTarget = target.has(`${x},${y}`);
-        ctx.fillStyle = insideTarget ? p.color : '#ff5c7a';
+        if(y>=GAME_ROWS){
+          ctx.fillStyle = p.color;
+        } else {
+          const insideTarget = target.has(`${x},${y}`);
+          ctx.fillStyle = insideTarget ? p.color : '#ff5c7a';
+        }
         ctx.fillRect(x*CELL+5,y*CELL+5,CELL-10,CELL-10);
       });
       ctx.globalAlpha=1;
@@ -717,11 +761,11 @@
     setTimeout(()=>newRound(game.mode==='survival'), 600);
   }
 
-  async function endRun(reason){
+  async function endRun(reason, saveScore=true){
     clearInterval(game.int);
-    const saved = await addRanking(game.mode, game.score);
+    const saved = saveScore ? await addRanking(game.mode, game.score) : {ok:true};
     msgEl.innerHTML = `<span style="color:var(--bad)">${reason}</span>`;
-    if(saved && !saved.ok){
+    if(saveScore && saved && !saved.ok){
       alert(`${reason}\nPontuação: ${game.score}\n\nAviso: ranking online falhou (${saved.reason}).\nA pontuação foi salva localmente neste aparelho.`);
     } else {
       alert(`${reason}\nPontuação: ${game.score}`);
