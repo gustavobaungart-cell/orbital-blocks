@@ -38,7 +38,7 @@
     .pill{padding:4px 8px;border-radius:999px;background:#1b2a58;border:1px solid #375099;font-size:.8rem}
   </style>
 
-  <script src="./firebase-config.public.js"></script>
+  <script src="./firebase-config.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 </head>
@@ -86,6 +86,12 @@
         <div class="card grid">
           <div id="pieces" class="grid"></div>
           <button class="btn warn" id="showSolution">Ver solução (🪙1)</button>
+          <div class="row" id="survivalHelpRow" style="display:none">
+            <button class="btn" id="useAutoPlace">🧩 Usar ajuda</button><span class="pill" id="helpAutoCount">x0</span>
+          </div>
+          <div class="row" id="survivalTimeRow" style="display:none">
+            <button class="btn" id="useTimeBoost">⏱️ +25s</button><span class="pill" id="helpTimeCount">x0</span>
+          </div>
           <button class="btn good" id="newRound">Próxima fase</button>
         </div>
       </div>
@@ -94,21 +100,24 @@
     <section id="screenRank" class="card hidden rank">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ranking ONLINE</h2><button class="btn" data-go="menu">Voltar</button></div>
       <table>
-        <thead><tr><th>#</th><th>Nick</th><th>Modo</th><th>Pontos</th><th>Data</th></tr></thead>
+        <thead><tr><th>#</th><th>Nick</th><th>Modo</th><th>Pontos</th><th>Fase</th><th>Data</th></tr></thead>
         <tbody id="rankBody"></tbody>
       </table>
     </section>
 
     <section id="screenStore" class="card hidden grid">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Loja</h2><button class="btn" data-go="menu">Voltar</button></div>
-      <div class="card">
-        <h3 style="margin-top:0">Remover anúncios</h3>
-        <p class="sub">Compra única simbólica: <b>R$ 1,00</b> (simulado no protótipo).</p>
-        <button class="btn primary" id="buyNoAds">Comprar</button>
+      <div class="card grid">
+        <h3 style="margin:0">Moedas</h3>
+        <p class="sub">No protótipo: clique para recarregar (+100 moedas).</p>
+        <button class="btn primary" id="rechargeCoins">Recarregar moedas (+100)</button>
       </div>
-      <div class="card">
-        <h3 style="margin-top:0">Continuar partida</h3>
-        <p class="sub">Use moedas no modo Sobrevivência para continuar.</p>
+      <div class="card grid">
+        <h3 style="margin:0">Ajudas (Somente Sobrevivência)</h3>
+        <p class="sub">Cada ajuda custa 🪙10.</p>
+        <button class="btn" id="buyContinueHelp">💖 Continuar após morte (x<span id="storeContinueCount">0</span>)</button>
+        <button class="btn" id="buyAutoPlaceHelp">🧩 Posicionar 1 peça correta (x<span id="storeAutoCount">0</span>)</button>
+        <button class="btn" id="buyTimeHelp">⏱️ Resetar tempo (+25s) (x<span id="storeTimeCount">0</span>)</button>
       </div>
     </section>
   </main>
@@ -129,12 +138,14 @@
     coins: (()=>{ const raw=localStorage.getItem('orbital.coins'); return raw===null ? 100 : Number(raw||0); })(),
     noAds: localStorage.getItem('orbital.noads') === '1',
     ranking: JSON.parse(localStorage.getItem('orbital.rank') || '[]'),
+    helps: JSON.parse(localStorage.getItem('orbital.helps') || '{"continue":0,"autoplace":0,"time":0}'),
   };
   const saveState = () => {
     localStorage.setItem('orbital.nick', state.nick);
     localStorage.setItem('orbital.coins', String(state.coins));
     localStorage.setItem('orbital.noads', state.noAds ? '1' : '0');
     localStorage.setItem('orbital.rank', JSON.stringify(state.ranking.slice(0,100)));
+    localStorage.setItem('orbital.helps', JSON.stringify(state.helps));
   };
 
   function spendCoin(cost=1){
@@ -201,6 +212,23 @@
   }
   function askNick(){ nickInput.value = state.nick; nickModal.classList.remove('hidden'); nickInput.focus(); }
 
+  function updateStoreCounts(){
+    const sc=document.getElementById('storeContinueCount'); if(sc) sc.textContent=state.helps.continue||0;
+    const sa=document.getElementById('storeAutoCount'); if(sa) sa.textContent=state.helps.autoplace||0;
+    const st=document.getElementById('storeTimeCount'); if(st) st.textContent=state.helps.time||0;
+  }
+
+  function updateHelpUI(){
+    const isSurvival = game.mode==='survival';
+    const rowA=document.getElementById('survivalHelpRow');
+    const rowT=document.getElementById('survivalTimeRow');
+    if(rowA) rowA.style.display = isSurvival ? 'flex' : 'none';
+    if(rowT) rowT.style.display = isSurvival ? 'flex' : 'none';
+    const cA=document.getElementById('helpAutoCount'); if(cA) cA.textContent = 'x'+(state.helps.autoplace||0);
+    const cT=document.getElementById('helpTimeCount'); if(cT) cT.textContent = 'x'+(state.helps.time||0);
+    updateStoreCounts();
+  }
+
   // ---------- ranking ----------
   let db = null;
   async function initFirebase(){
@@ -211,9 +239,11 @@
     }catch(e){ console.warn('Firebase init falhou', e); }
   }
 
-  async function addRanking(mode, score){
+  async function addRanking(mode, score, level=0){
+    if(mode!=='survival') return {ok:true, skipped:true};
+
     // fallback local para não perder pontuação em caso de erro remoto
-    state.ranking.push({nick:(state.nick||'SemNick').slice(0,18), mode, score:Math.max(0,Math.floor(score||0)), at:new Date().toISOString()});
+    state.ranking.push({nick:(state.nick||'SemNick').slice(0,18), mode, score:Math.max(0,Math.floor(score||0)), level:Math.max(1,Math.floor(level||1)), at:new Date().toISOString()});
     state.ranking.sort((a,b)=>b.score-a.score);
     saveState();
 
@@ -224,6 +254,7 @@
         nick: (state.nick||'SemNick').slice(0,18),
         mode,
         score: Math.max(0, Math.floor(score||0)),
+        level: Math.max(1, Math.floor(level||1)),
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       return {ok:true};
@@ -246,7 +277,7 @@
           const r = doc.data() || {};
           const date = r.createdAt?.toDate ? r.createdAt.toDate() : new Date();
           const tr=document.createElement('tr');
-          tr.innerHTML=`<td>${i++}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${date.toLocaleDateString()}</td>`;
+          tr.innerHTML=`<td>${i++}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${r.level||'-'}</td><td>${date.toLocaleDateString()}</td>`;
           tb.appendChild(tr);
         });
         if(tb.children.length) return;
@@ -258,10 +289,10 @@
     // fallback local
     state.ranking.slice(0,30).forEach((r,i)=>{
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${i+1}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${new Date(r.at||Date.now()).toLocaleDateString()}</td>`;
+      tr.innerHTML=`<td>${i+1}</td><td>${r.nick||'-'}</td><td>${r.mode||'-'}</td><td>${r.score||0}</td><td>${r.level||'-'}</td><td>${new Date(r.at||Date.now()).toLocaleDateString()}</td>`;
       tb.appendChild(tr);
     });
-    if(!tb.children.length){ const tr=document.createElement('tr'); tr.innerHTML='<td colspan="5" class="sub">Sem pontuações ainda.</td>'; tb.appendChild(tr); }
+    if(!tb.children.length){ const tr=document.createElement('tr'); tr.innerHTML='<td colspan="6" class="sub">Sem pontuações ainda.</td>'; tb.appendChild(tr); }
   }
 
   // ---------- game core ----------
@@ -306,9 +337,9 @@
   function norm(c){const minX=Math.min(...c.map(p=>p[0])),minY=Math.min(...c.map(p=>p[1])); return c.map(([x,y])=>[x-minX,y-minY]).sort((a,b)=>a[1]-b[1]||a[0]-b[0]);}
   function rng(seed){let x=seed%2147483647; return ()=> (x=x*48271%2147483647)/2147483647;}
 
-  function survivalRoundTime(level){
-    // inicia em 20s e reduz 1s por vitória, limite mínimo 8s
-    return Math.max(8, 20 - (level-1));
+  function survivalRoundBonus(level){
+    // bônus por fase: 25s reduzindo 0,3 por fase, mínimo 10s
+    return Math.max(10, 25 - ((level-1)*0.3));
   }
 
   function pieceCountForLevel(level){
@@ -319,19 +350,22 @@
 
   function applyBackgroundByLevel(level){
     const themes = [
-      'radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%)',
-      'radial-gradient(circle at 80% 0%,#3a1b6b,#070b1a 48%)',
-      'radial-gradient(circle at 50% 0%,#0d4d73,#070b1a 48%)',
-      'radial-gradient(circle at 30% 0%,#5a1a3a,#070b1a 48%)'
+      'radial-gradient(circle at 20% 0%,#1a2a63,#070b1a 45%)', // azul escuro
+      'radial-gradient(circle at 20% 0%,#174830,#070b1a 45%)', // verde escuro
+      'radial-gradient(circle at 20% 0%,#3b1d5b,#070b1a 45%)', // roxo
+      'radial-gradient(circle at 20% 0%,#5a4717,#070b1a 45%)', // dourado escuro
+      'radial-gradient(circle at 20% 0%,#5a2f17,#070b1a 45%)', // laranja escuro
+      'radial-gradient(circle at 20% 0%,#4a141d,#070b1a 45%)'  // vermelho escuro
     ];
-    document.body.style.background = themes[(level-1)%themes.length];
+    const idx = Math.floor((Math.max(1,level)-1)/3) % themes.length;
+    document.body.style.background = themes[idx];
   }
 
   function startMode(mode){
     game.mode=mode; game.level=1; game.score=0; game.lives=0;
     game.vsPlayerStars=0; game.vsCpuStars=0;
 
-    if(mode==='survival') game.sec = 20;
+    if(mode==='survival') game.sec = 25;
     else game.sec = 0;
 
     if(mode==='versus'){
@@ -353,11 +387,12 @@
     if(game.int) clearInterval(game.int);
     game.int = setInterval(tick,1000);
     show('game');
+    updateHelpUI();
   }
 
   function tick(){
     if(game.mode==='survival'){
-      game.sec--;
+      game.sec = Math.max(0, game.sec - 1);
       if(game.sec<=0){
         clearInterval(game.int);
         handleSurvivalDeath();
@@ -368,7 +403,6 @@
       game.sec++;
       hudTimer.textContent = '⏱️ ' + fmt(game.sec);
     } else {
-      // treinamento (infinito)
       game.sec++;
       hudTimer.textContent = '⏱️ ∞';
     }
@@ -377,24 +411,26 @@
       ? `⭐ Você ${game.vsPlayerStars} x ${game.vsCpuStars} CPU`
       : `🪙 ${state.coins}`;
   }
-  function fmt(s){ const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(Math.max(0,s%60)).padStart(2,'0'); return `${mm}:${ss}`; }
+  function fmt(s){ const mm=String(Math.floor(s/60)).padStart(2,'0'); const ss=String(Math.max(0,Math.floor(s%60))).padStart(2,'0'); return `${mm}:${ss}`; }
 
   async function handleSurvivalDeath(){
     const scoreBefore = game.score;
-    await addRanking('survival', scoreBefore);
+    const levelBefore = game.level;
+    await addRanking('survival', scoreBefore, levelBefore);
 
-    const canContinue = state.coins >= 1 && confirm(`Você morreu.\nPontuação ${scoreBefore} registrada no ranking.\nContinuar do nível atual por 🪙1?\n(Se continuar, seus pontos zeram)`);
-
-    if(canContinue){
-      state.coins = Math.max(0, state.coins - 1);
-      game.score = 0;
-      game.sec = survivalRoundTime(game.level);
-      saveState();
-      updateHud();
-      msgEl.innerHTML = '<span style="color:var(--warn)">Continuação ativada (🪙1). Pontos resetados.</span>';
-      newRound(true);
-      game.int = setInterval(tick,1000);
-      return;
+    if((state.helps.continue||0) > 0){
+      const usePower = confirm(`Você morreu.\nGostaria de usar um poder e continuar sem zerar a pontuação?\n(Disponível: ${state.helps.continue})`);
+      if(usePower){
+        state.helps.continue = Math.max(0, (state.helps.continue||0) - 1);
+        game.sec = survivalRoundBonus(game.level);
+        saveState();
+        updateHud();
+        updateHelpUI();
+        msgEl.innerHTML = '<span style="color:var(--ok)">Poder de continuação usado. Jogo retomado!</span>';
+        newRound(false);
+        game.int = setInterval(tick,1000);
+        return;
+      }
     }
 
     endRun('Fim de jogo!', false);
@@ -402,7 +438,7 @@
 
   function newRound(resetTimer=true){
     if(resetTimer){
-      if(game.mode==='survival') game.sec = survivalRoundTime(game.level);
+      // reservado para outros modos
     }
     const rand=rng(Date.now()+game.level*31);
     game.pieces=[]; game.placed=[]; game.dragging=null; game.hover=null;
@@ -532,20 +568,27 @@
     hudScore.textContent = '⭐ ' + game.score;
     hudTimer.textContent = game.mode==='training' ? '⏱️ ∞' : ('⏱️ ' + fmt(game.sec));
     refreshTop();
+    updateHelpUI();
   }
 
   function shapeAtRot(piece, rot){ let c=piece.base.map(p=>[...p]); for(let i=0;i<rot;i++) c=rotateCoords(c); return norm(c); }
   function shape(piece){ return shapeAtRot(piece, piece.rot); }
   function cellsAt(piece,anchor){ return shape(piece).map(([x,y])=>[anchor[0]+x,anchor[1]+y]); }
 
+  function normalizePlaced(){
+    const byId = new Map();
+    game.placed.forEach(pl=>byId.set(pl.pieceId, pl));
+    game.placed = [...byId.values()];
+  }
+
   function validPlacement(pieceId, anchor){
     const p=game.pieces.find(x=>x.id===pieceId); if(!p) return false;
     const cells=cellsAt(p,anchor); const target=new Set(game.puzzleCells.map(c=>c.join(',')));
-    for(const c of cells){ const k=c.join(','); if(c[0]<0||c[0]>=N||c[1]<0||c[1]>=N) return false; if(!target.has(k)) return false; }
+    for(const c of cells){ const k=c.join(','); if(c[0]<0||c[0]>=N||c[1]<0||c[1]>=N) return false; if(c[1] < GAME_ROWS && !target.has(k)) return false; }
     for(const pl of game.placed){ if(pl.pieceId===pieceId) continue; const pp=game.pieces.find(x=>x.id===pl.pieceId); const set=new Set(cellsAt(pp,pl.anchor).map(c=>c.join(','))); for(const c of cells){ if(set.has(c.join(','))) return false; } }
     return true;
   }
-  function refreshVal(){ game.placed = game.placed.map(pl=>({...pl, valid: validPlacement(pl.pieceId, pl.anchor)})); }
+  function refreshVal(){ normalizePlaced(); game.placed = game.placed.map(pl=>({...pl, valid: validPlacement(pl.pieceId, pl.anchor)})); }
 
   function solved(){
     if(!game.pieces.every(p=>p.placed)) return false;
@@ -731,7 +774,6 @@
       const playerWon = playerTimeSec <= cpuTimeSec;
       if(playerWon) game.vsPlayerStars++; else game.vsCpuStars++;
       game.score += playerWon ? 120 : 40;
-      state.coins += playerWon ? 10 : 4;
 
       const target = Math.ceil(game.vsRounds/2);
       if(game.vsPlayerStars >= target || game.vsCpuStars >= target){
@@ -749,21 +791,20 @@
     }
 
     game.score += 100 + Math.max(0, 40 - Math.floor(game.sec/3));
-    state.coins += 12;
     game.level++;
 
     if(game.mode==='survival'){
-      game.sec = survivalRoundTime(game.level);
+      game.sec += survivalRoundBonus(game.level);
     }
 
     updateHud();
-    msgEl.innerHTML='<span style="color:var(--ok)">Fase concluída! +pontos +moedas.</span>';
-    setTimeout(()=>newRound(game.mode==='survival'), 600);
+    msgEl.innerHTML='<span style="color:var(--ok)">Fase concluída! +pontos.</span>';
+    setTimeout(()=>newRound(false), 600);
   }
 
   async function endRun(reason, saveScore=true){
     clearInterval(game.int);
-    const saved = saveScore ? await addRanking(game.mode, game.score) : {ok:true};
+    const saved = saveScore ? await addRanking(game.mode, game.score, game.level) : {ok:true};
     msgEl.innerHTML = `<span style="color:var(--bad)">${reason}</span>`;
     if(saveScore && saved && !saved.ok){
       alert(`${reason}\nPontuação: ${game.score}\n\nAviso: ranking online falhou (${saved.reason}).\nA pontuação foi salva localmente neste aparelho.`);
@@ -791,20 +832,85 @@
     msgEl.textContent='Solução exibida (🪙1). Pontuação não é contabilizada nesta fase.';
     // não pontua automaticamente ao ver solução
   };
-  document.getElementById('newRound').onclick=()=>newRound();
+  document.getElementById('newRound').onclick=()=>newRound(false);
   document.getElementById('exitGame').onclick=()=>{
     clearInterval(game.int);
-    // não trava navegação por causa da rede
-    addRanking(game.mode, game.score).catch(()=>{});
+    addRanking(game.mode, game.score, game.level).catch(()=>{});
     show('menu');
   };
+
+  document.getElementById('useAutoPlace').onclick=()=>{
+    if(game.mode!=='survival') return;
+    if((state.helps.autoplace||0) <= 0){ alert('Você não possui essa ajuda.'); return; }
+
+    const targetSet = new Set(game.puzzleCells.map(c=>c.join(',')));
+    let chosen = null;
+    for(const p of game.pieces){
+      const pl = game.placed.find(x=>x.pieceId===p.id);
+      if(!pl){ chosen = p; break; }
+      const cells = cellsAt(p, pl.anchor);
+      const okNow = cells.every(([x,y])=> targetSet.has(`${x},${y}`)) && pl.valid;
+      if(!okNow){ chosen = p; break; }
+    }
+    if(!chosen){ return; }
+
+    const plIdx = game.placed.findIndex(x=>x.pieceId===chosen.id);
+    if(plIdx>=0){ game.placed[plIdx] = {pieceId:chosen.id, anchor:[...chosen.solutionAnchor], valid:true}; }
+    else { game.placed.push({pieceId:chosen.id, anchor:[...chosen.solutionAnchor], valid:true}); }
+    chosen.rot = chosen.solutionRot;
+    chosen.placed = true;
+
+    state.helps.autoplace = Math.max(0, (state.helps.autoplace||0)-1);
+    saveState();
+    refreshVal();
+    updateHud();
+    renderPieces();
+    draw();
+    if(solved()) winRound();
+  };
+
+  document.getElementById('useTimeBoost').onclick=()=>{
+    if(game.mode!=='survival') return;
+    if((state.helps.time||0) <= 0){ alert('Você não possui essa ajuda.'); return; }
+    state.helps.time = Math.max(0, (state.helps.time||0)-1);
+    game.sec += 25;
+    saveState();
+    updateHud();
+    msgEl.textContent='Tempo resetado: +25s.';
+  };
+
   document.getElementById('audioBtn').onclick=()=>audio.toggle();
   document.getElementById('changeNick').onclick=askNick;
   document.getElementById('saveNick').onclick=()=>{
     const n=nickInput.value.trim(); if(!n) return;
-    state.nick=n.slice(0,18); saveState(); refreshTop(); nickModal.classList.add('hidden');
+    state.nick=n.slice(0,18); saveState(); refreshTop(); updateHelpUI(); nickModal.classList.add('hidden');
   };
-  document.getElementById('buyNoAds').onclick=()=>{ state.noAds=true; saveState(); alert('Compra simulada concluída: anúncios removidos.'); };
+
+  document.getElementById('rechargeCoins').onclick=()=>{
+    state.coins += 100;
+    saveState();
+    updateHud();
+    alert('Moedas recarregadas: +100');
+  };
+
+  document.getElementById('buyContinueHelp').onclick=()=>{
+    if(!spendCoin(10)) return;
+    state.helps.continue = (state.helps.continue||0)+1;
+    saveState();
+    updateHud();
+  };
+  document.getElementById('buyAutoPlaceHelp').onclick=()=>{
+    if(!spendCoin(10)) return;
+    state.helps.autoplace = (state.helps.autoplace||0)+1;
+    saveState();
+    updateHud();
+  };
+  document.getElementById('buyTimeHelp').onclick=()=>{
+    if(!spendCoin(10)) return;
+    state.helps.time = (state.helps.time||0)+1;
+    saveState();
+    updateHud();
+  };
 
   // ---------- init ----------
   if(localStorage.getItem('orbital.coins')===null){ saveState(); }
