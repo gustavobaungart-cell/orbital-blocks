@@ -470,6 +470,34 @@
       game.puzzleCells = [...occ].map(s=>s.split(',').map(Number));
     }
 
+    // mobile-first: já inicia peças dentro do tabuleiro (fora da área alvo)
+    const targetSet = new Set(game.puzzleCells.map(c=>c.join(',')));
+    const occStart = new Set();
+    game.placed = [];
+    game.pieces.forEach((p, i)=>{
+      let placedStart = false;
+      for(let t=0;t<240 && !placedStart;t++){
+        const ax = Math.floor(rand()*N);
+        const ay = Math.floor(rand()*N);
+        const cells = cellsAt(p,[ax,ay]);
+        if(cells.some(([x,y])=>x<0||x>=N||y<0||y>=N)) continue;
+        if(cells.some(([x,y])=>targetSet.has(`${x},${y}`))) continue;
+        if(cells.some(([x,y])=>occStart.has(`${x},${y}`))) continue;
+        cells.forEach(([x,y])=>occStart.add(`${x},${y}`));
+        game.placed.push({pieceId:p.id, anchor:[ax,ay], valid:false});
+        p.placed = true;
+        placedStart = true;
+      }
+      if(!placedStart){
+        // fallback simples se não achar espaço perfeito
+        const ax = (i*2) % Math.max(1, N-2);
+        const ay = N-2 - (i%2);
+        game.placed.push({pieceId:p.id, anchor:[ax,ay], valid:false});
+        p.placed = true;
+      }
+    });
+    refreshVal();
+
     updateHud(); renderPieces(); draw();
     msgEl.textContent='Nova fase: arraste e encaixe todas as peças.';
     audio.setLevel(Math.min(6,1+Math.floor(game.level/2)));
@@ -539,12 +567,18 @@
   }
 
   function renderPieces(){
+    const allPlacedOnBoard = game.pieces.every(p=>p.placed);
+    if(allPlacedOnBoard){
+      piecesEl.innerHTML = '<div class="sub">Peças já estão no tabuleiro. Arraste para mover e toque para girar.</div>';
+      return;
+    }
+
     piecesEl.innerHTML='';
     game.pieces.forEach((p,idx)=>{
       const div=document.createElement('div'); div.className='piece';
       const shp=shape(p), maxX=Math.max(...shp.map(c=>c[0])), maxY=Math.max(...shp.map(c=>c[1]));
       const boardCellPx = Math.max(8, Math.floor(board.getBoundingClientRect().width / N));
-      const cellPx = Math.max(8, Math.min(16, Math.floor(boardCellPx * 0.55))); // miniatura proporcional
+      const cellPx = Math.max(8, Math.min(16, Math.floor(boardCellPx * 0.55)));
       const pad = 4;
       const cv=document.createElement('canvas');
       cv.width=(maxX+1)*cellPx + pad*2;
@@ -558,7 +592,7 @@
       div.appendChild(cv);
       div.onclick=()=>{ p.rot=(p.rot+1)%4; refreshVal(); draw(); renderPieces(); if(solved()) winRound(); };
       div.onpointerdown=(ev)=>{
-        if(p.placed) return; // evita duplicar a mesma peça
+        if(p.placed) return;
         game.dragging=p.id;
         game.hover=null;
         ev.preventDefault();
@@ -638,11 +672,6 @@
     }
     game.pendingBoardPiece=null; game.pendingStart=null; game.boardDragging=false;
   });
-
-  // reforço mobile (evita scroll da página durante drag)
-  board.addEventListener('touchstart', (e)=>{ e.preventDefault(); }, {passive:false});
-  board.addEventListener('touchmove', (e)=>{ e.preventDefault(); }, {passive:false});
-  board.addEventListener('touchend', (e)=>{ e.preventDefault(); }, {passive:false});
 
   document.addEventListener('pointerup',()=>{
     if(game.dragging!=null){ game.dragging=null; game.hover=null; draw(); }
